@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@equilab/api/genshiro/*": ["./genshiro/*"],
+      "@polkadot/api/augment": ["./genshiro/interfaces/augment-api.ts"],
+      "@polkadot/types/augment": ["./genshiro/interfaces/augment-types.ts"]
+    },
+    "composite": true,
+    "target": "esnext",
+    "lib": ["esnext"],
+    "module": "esnext",
+    "experimentalDecorators": true,
+    "jsx": "preserve",
+    "declaration": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "rootDir": "./genshiro",
+    "outDir": "../genshiro",
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "include": ["./genshiro"]
+}

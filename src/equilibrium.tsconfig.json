@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@equilab/api/equilibrium/*": ["./equilibrium/*"],
+      "@polkadot/api/augment": ["./equilibrium/interfaces/augment-api.ts"],
+      "@polkadot/types/augment": ["./equilibrium/interfaces/augment-types.ts"]
+    },
+    "composite": true,
+    "target": "esnext",
+    "lib": ["esnext"],
+    "module": "esnext",
+    "experimentalDecorators": true,
+    "jsx": "preserve",
+    "declaration": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "rootDir": "./equilibrium",
+    "outDir": "../equilibrium",
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "include": ["./equilibrium"]
+}

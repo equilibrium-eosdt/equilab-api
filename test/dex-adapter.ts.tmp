@@ -1,0 +1,151 @@
+import "mocha";
+import Keyring from "@polkadot/keyring";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
+import assert from "assert";
+import { createAdapter } from "../src/dex";
+
+let kr: Keyring | undefined;
+let adapter: ReturnType<typeof createAdapter> | undefined;
+
+const seed =
+  "lyrics topple split fold junk ecology woman talent jazz height wrist lonely";
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe.skip("DEX Adapter", function () {
+  this.timeout(30000);
+
+  before(async () => {
+    await cryptoWaitReady(); // need to initialize wasm first
+
+    // create keyring to broadcast transactions to blockchain
+    kr = new Keyring();
+    kr.addFromMnemonic(seed, {}, "sr25519");
+
+    adapter = createAdapter({
+      nodes: "wss://devnet.genshiro.io", // you can also specify multiple fallback nodes, eg.
+      // nodes: ["wss://node1.genshiro.io", "wss://node2.genshiro.io"],
+      keyring: kr, // optional; use it if you want to broadcast transactions
+    });
+  });
+
+  after(() => {
+    adapter?.disconnect();
+  });
+
+  it("gets current orders and trades via promise", async () => {
+    const orders = await adapter
+      ?.getOrders(
+        "Wbtc", // get orders by current token
+      )
+      // use .get() method to get current values
+      .get();
+
+    assert(orders);
+
+    const trades = await adapter
+      ?.getTrades(
+        "Wbtc", // get trades by current token
+      )
+      .get();
+    assert(trades);
+  });
+
+  it.skip("subscribes to latest orders and trades", async () => {
+    let count = 0;
+
+    const unsub_o = adapter
+      ?.getOrders("Wbtc")
+      // use .subscribe() method to subscribe to updates
+      .subscribe(() => {
+        count++;
+      });
+
+    const unsub_t = adapter?.getTrades("Wbtc").subscribe(() => {
+      count++;
+    });
+
+    await delay(20000);
+
+    // do not forget to unsubscribe
+    unsub_o?.();
+    unsub_t?.();
+    assert(count >= 3, "subscriptions should produce at least 2 results");
+  });
+
+  it("creates new order and then cancels it", async () => {
+    // get all WBTC/EQD orders
+    let orders = await adapter?.getOrders("Wbtc").get();
+
+    let minSellPrice =
+      orders?.reduce((min, { price, side }) => {
+        const val = Number(price);
+
+        if (side === "buy") {
+          return min;
+        }
+
+        if (!Number.isFinite(val)) {
+          return min;
+        }
+
+        return val < min ? val : min;
+      }, Infinity) ?? 1;
+
+    if (!Number.isFinite(minSellPrice)) {
+      minSellPrice = 1;
+    }
+
+    // deposit 1 WBTC to trading account
+    await adapter
+      ?.deposit(
+        1, // amount to deposit
+        "Wbtc", // token to deposit
+      )
+      .exec();
+
+    const rnd = (Math.random() * 1e2).toFixed(0);
+    const amount = "0." + rnd;
+    const price = minSellPrice;
+
+    // create order
+    const events = await adapter
+      ?.createOrder(
+        "Wbtc", // first token of pair {token}/EQD
+        "Sell", // side - either "Sell" or "Buy"
+        amount, // amount
+        price, // price
+      )
+      .exec();
+
+    assert((events?.length ?? 0) > 0, "no successfull event");
+    orders = await adapter?.getOrders("Wbtc").get();
+
+    const lastOrder = orders?.find((order) => {
+      const p = Number(order.price);
+      const a = Number(order.amount);
+
+      return (
+        Math.abs(price - p) <= 0.001 && Math.abs(Number(amount) - a) <= 0.001
+      );
+    });
+
+    assert(lastOrder, "order was not found; maybe it was matched?");
+
+    // cancel order
+    await adapter
+      ?.cancelOrder(
+        "Wbtc", // first token of pair {token}/EQD
+        lastOrder.id, // order ID
+        price, // price
+      )
+      .exec();
+
+    orders = await adapter?.getOrders("Wbtc").get();
+
+    assert(
+      !orders?.find((o) => o.id === lastOrder.id),
+      "order was not canceled",
+    );
+  });
+});

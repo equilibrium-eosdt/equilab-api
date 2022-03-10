@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@equilab/api/equilibrium/*": ["./src/equilibrium/*"],
+      "@equilab/api/eq-next/*": ["./src/eq-next/*"],
+      "@equilab/api/genshiro/*": ["./src/genshiro/*"]
+    },
+    "target": "esnext",
+    "lib": ["esnext", "dom"],
+    "module": "esnext",
+    "experimentalDecorators": true,
+    "jsx": "preserve",
+    "declaration": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "outDir": "./",
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "references": [
+    { "path": "./src/equilibrium.tsconfig.json" },
+    { "path": "./src/eq-next.tsconfig.json" },
+    { "path": "./src/genshiro.tsconfig.json" }
+  ],
+  "include": ["./src"],
+  "exclude": ["./src/equilibrium", "./src/eq-next", "./src/genshiro"]
+}

@@ -1,0 +1,462 @@
+import type { ApiRx } from "@polkadot/api";
+import type Keyring from "@polkadot/keyring";
+
+import type {
+  FrameSupportWeightsDispatchInfo,
+  SpRuntimeDispatchError,
+} from "@polkadot/types/lookup";
+
+import type {
+  IEvent,
+  ISubmittableResult,
+  RegistryError,
+} from "@polkadot/types/types";
+
+import {
+  BehaviorSubject,
+  combineLatest,
+  Observable,
+  of /*, lastValueFrom */,
+} from "rxjs";
+
+import { fromFetch } from "rxjs/fetch";
+
+import {
+  catchError,
+  filter,
+  map,
+  mergeMap,
+  scan,
+  share,
+  switchMap,
+  tap,
+} from "rxjs/operators";
+
+import qs from "querystring";
+import { getApiCreator } from ".";
+
+import {
+  ExchangesResponse,
+  isChainIdResponse,
+  isExchangesResponse,
+} from "./response";
+
+import { assetFromToken } from "./util";
+
+if (!global.fetch) {
+  require("isomorphic-fetch");
+
+  if (!global.AbortController) {
+    global.AbortController = require("abort-controller");
+  }
+}
+
+const AMOUNT_PRECISION = 18;
+const PRICE_PRECISION = 9;
+
+const withPrecision = (num: number | string, precision: number) => {
+  const val = num.toString();
+  const [int, fra] = val.split(".");
+  return `${int}${(fra ?? "").padEnd(precision, "0")}`;
+};
+
+/**
+ * TODOs:
+ * - better error reporting
+ */
+
+const wrapQuery = <T>(observable: Observable<T | undefined>) => ({
+  observable,
+  get: () =>
+    new Promise<T>((resolve) => {
+      const sub = observable.subscribe((val) => {
+        if (val) {
+          sub.unsubscribe();
+          resolve(val);
+        }
+      });
+    }),
+
+  subscribe: (callback: (val: T) => void) => {
+    const s = observable.subscribe((val) => {
+      if (val) {
+        callback(val);
+      }
+    });
+
+    return () => s.unsubscribe();
+  },
+});
+
+class TxError extends Error {
+  public registryErrors: RegistryError[];
+
+  constructor(message: string, errors: RegistryError[]) {
+    super(message);
+    this.registryErrors = errors;
+  }
+}
+
+const handleTx = (api: ApiRx) =>
+  switchMap(
+    (res: ISubmittableResult) =>
+      new Promise<IEvent<[FrameSupportWeightsDispatchInfo]>[]>(
+        (resolve, reject) => {
+          if (res.status.isInBlock || res.status.isFinalized) {
+            const { success, error } = res.events.reduce<{
+              success: IEvent<[FrameSupportWeightsDispatchInfo]>[];
+              error: IEvent<
+                [SpRuntimeDispatchError, FrameSupportWeightsDispatchInfo]
+              >[];
+            }>(
+              (prev, event) => {
+                if (api.events.system.ExtrinsicFailed.is(event.event)) {
+                  return { ...prev, error: [...prev.error, event.event] };
+                } else if (api.events.system.ExtrinsicSuccess.is(event.event)) {
+                  return { ...prev, success: [...prev.success, event.event] };
+                } // TODO need to handle batches
+
+                return prev;
+              },
+              { success: [], error: [] },
+            );
+
+            if (success.length) {
+              resolve(success);
+              return;
+            } else if (error.length) {
+              try {
+                const decoded = error.map((e) =>
+                  api.registry.findMetaError(e.data[0].asModule),
+                );
+
+                const message = decoded
+                  .map(
+                    ({ section, method, docs }) =>
+                      `${section}.${method}: ${docs.join(" ")}`,
+                  )
+                  .join(", ");
+
+                const err = new TxError(message, decoded);
+                reject(err);
+              } catch (error) {
+                reject(error);
+              }
+
+              return;
+            }
+          }
+        },
+      ),
+  );
+
+const wrapTx = (
+  observable: Observable<IEvent<[FrameSupportWeightsDispatchInfo]>[]>,
+) => ({
+  observable,
+  exec: () => {
+    let resolve:
+      | undefined
+      | ((val: IEvent<[FrameSupportWeightsDispatchInfo]>[]) => void);
+
+    let reject: undefined | ((e: Error) => void);
+    let resolved = false;
+
+    const promise = new Promise<IEvent<[FrameSupportWeightsDispatchInfo]>[]>(
+      (y, n) => {
+        resolve = y;
+        reject = n;
+      },
+    );
+
+    const s = observable.subscribe({
+      error(e) {
+        reject?.(e);
+        s.unsubscribe();
+      },
+
+      next(val) {
+        if (!resolved) {
+          resolved = true;
+          resolve?.(val);
+          s.unsubscribe();
+        }
+      },
+    });
+
+    return promise;
+  },
+});
+
+interface AdapterOptions {
+  historyEndpoint?: string;
+  nodes: string | string[];
+  keyring?: Keyring;
+}
+
+const createFetchObservable = <T>(
+  endpoint: string,
+  predicate: (raw: any) => raw is T,
+) =>
+  fromFetch(endpoint).pipe(
+    switchMap((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP status: ${response.status}`);
+      }
+
+      return response.json();
+    }),
+
+    map((raw) => {
+      if (predicate(raw)) {
+        return {
+          success: true,
+          data: raw,
+        };
+      }
+
+      throw new Error("Wrong response");
+    }),
+
+    catchError((err) => of({ success: false, message: err.message })),
+
+    share({
+      connector: () =>
+        new BehaviorSubject<
+          undefined | { success: boolean; message?: string; data?: T }
+        >(undefined),
+    }),
+  );
+
+export const createAdapter = ({
+  nodes,
+  historyEndpoint = "https://apiv2.equilibrium.io/api",
+  keyring,
+}: AdapterOptions) => {
+  const api = getApiCreator("Gens", "rxjs")(nodes);
+
+  const blockNumber = api.pipe(
+    mergeMap((api) => api._api.rpc.chain.subscribeNewHeads()),
+    map((header) => header.number.toNumber()),
+  );
+
+  const chainId = api.pipe(
+    mergeMap((api) => api.getBlockHash(0)),
+
+    mergeMap((hash) =>
+      createFetchObservable(
+        `${historyEndpoint}/chains/byHash?hash=${hash.toHex()}`,
+        isChainIdResponse,
+      ),
+    ),
+
+    tap((result) => {
+      if (result && !result.success) {
+        console.error(result?.message);
+      }
+    }),
+
+    map((result) => result?.data?.chainId),
+  );
+
+  const getOrders = (token: string) =>
+    wrapQuery(api.pipe(mergeMap((api) => api.derive.dex.orders(token))));
+
+  const getBestPrice = (token: string) =>
+    wrapQuery(api.pipe(mergeMap((api) => api.derive.dex.bestPrice(token))));
+
+  const getTrades = (token: string) =>
+    wrapQuery(
+      combineLatest({
+        chainId,
+        fromBlock: blockNumber.pipe(
+          scan(
+            (acc, block) => {
+              if (!block) {
+                return { prev: undefined, block };
+              }
+
+              return { prev: acc.block, block };
+            },
+            { prev: undefined, block: undefined } as {
+              prev?: number;
+              block?: number;
+            },
+          ),
+
+          map(({ prev }) => prev),
+        ),
+      }).pipe(
+        mergeMap(({ chainId, fromBlock }) => {
+          if (typeof chainId === "undefined") {
+            return of(undefined);
+          }
+
+          const params: Record<string, any> = {
+            chainId,
+            currency: token,
+            page: 0,
+            pageSize: 10000, // TODO maybe more
+          };
+
+          if (fromBlock) {
+            params.fromBlock = fromBlock;
+          }
+
+          return createFetchObservable(
+            `${historyEndpoint}/dex/exchanges?${qs.stringify(params)}`,
+            isExchangesResponse,
+          );
+        }),
+
+        scan((total: ExchangesResponse[] | undefined, current) => {
+          if (!total && !current) {
+            return total;
+          }
+
+          if (!current?.success) {
+            console.error(current?.message);
+            return total;
+          }
+
+          return [...current.data!, ...(total ?? [])];
+        }, undefined),
+      ),
+    );
+
+  const createOrder = (
+    token: string,
+    direction: "Buy" | "Sell",
+    amount: string | number,
+    price: string | number,
+  ) => {
+    const pair = keyring?.getPairs()?.[0];
+
+    if (!pair) {
+      throw new Error(`keypair not found`);
+    }
+
+    return wrapTx(
+      api.pipe(
+        mergeMap((api) =>
+          api._api.tx.eqDex
+            .createOrder(
+              assetFromToken(token),
+              { Limit: withPrecision(price, PRICE_PRECISION) },
+              direction,
+              withPrecision(amount, AMOUNT_PRECISION),
+              "0",
+            )
+            .signAndSend(pair, {
+              nonce: -1,
+            })
+            .pipe(
+              filter((res) => res.isFinalized || res.isInBlock),
+              handleTx(api._api),
+            ),
+        ),
+      ),
+    );
+  };
+
+  const cancelOrder = (
+    token: string,
+    orderId: number,
+    price: string | number,
+  ) => {
+    const pair = keyring?.getPairs()?.[0];
+
+    if (!pair) {
+      throw new Error(`keypair not found`);
+    }
+
+    return wrapTx(
+      api.pipe(
+        mergeMap((api) =>
+          api._api.tx.eqDex
+            .deleteOrderExternal(
+              assetFromToken(token),
+              orderId,
+              withPrecision(price, PRICE_PRECISION),
+            )
+            .signAndSend(pair, {
+              nonce: -1,
+            })
+            .pipe(
+              filter((res) => res.isFinalized || res.isInBlock),
+              handleTx(api._api),
+            ),
+        ),
+      ),
+    );
+  };
+
+  const deposit = (amount: string | number, token: string) => {
+    const pair = keyring?.getPairs()?.[0];
+
+    if (!pair) {
+      throw new Error(`keypair not found`);
+    }
+
+    return wrapTx(
+      api.pipe(
+        mergeMap((api) =>
+          api.tx
+            .toSubaccount(
+              "Borrower",
+              assetFromToken(token),
+              withPrecision(amount, PRICE_PRECISION),
+            )
+            .signAndSend(pair, { nonce: -1 })
+            .pipe(
+              filter((res) => res.isFinalized || res.isInBlock),
+              handleTx(api._api),
+            ),
+        ),
+      ),
+    );
+  };
+
+  const withdraw = (amount: string | number, token: string) => {
+    const pair = keyring?.getPairs()?.[0];
+
+    if (!pair) {
+      throw new Error(`keypair not found`);
+    }
+
+    return wrapTx(
+      api.pipe(
+        mergeMap((api) =>
+          api.tx
+            .fromSubaccount(
+              "Borrower",
+              assetFromToken(token),
+              withPrecision(amount, PRICE_PRECISION),
+            )
+            .signAndSend(pair, { nonce: -1 })
+            .pipe(
+              filter((res) => res.isFinalized || res.isInBlock),
+              handleTx(api._api),
+            ),
+        ),
+      ),
+    );
+  };
+
+  return {
+    disconnect: () => {
+      const sub = api.subscribe((api) => {
+        sub.unsubscribe();
+        api._api.disconnect();
+      });
+    },
+
+    getOrders,
+    getBestPrice,
+    getTrades,
+    createOrder,
+    cancelOrder,
+    deposit,
+    withdraw,
+  };
+};

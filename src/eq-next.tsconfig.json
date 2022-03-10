@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@equilab/api/eq-next/*": ["./eq-next/*"],
+      "@polkadot/api/augment": ["./eq-next/interfaces/augment-api.ts"],
+      "@polkadot/types/augment": ["./eq-next/interfaces/augment-types.ts"]
+    },
+    "composite": true,
+    "target": "esnext",
+    "lib": ["esnext"],
+    "module": "esnext",
+    "experimentalDecorators": true,
+    "jsx": "preserve",
+    "declaration": true,
+    "sourceMap": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "rootDir": "./eq-next",
+    "outDir": "../eq-next",
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "include": ["./eq-next"]
+}

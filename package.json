@@ -1,0 +1,49 @@
+{
+  "name": "@equilab/api",
+  "version": "1.9.11",
+  "main": "./index.js",
+  "license": "MIT",
+  "description": "JS API for Equilibrium and Genshiro parachains.",
+  "mocha": {
+    "extension": [
+      "ts"
+    ]
+  },
+  "scripts": {
+    "build:ts": "rm -f ./*.d.ts && tsc --build --verbose",
+    "build": "yarn generate && yarn build:ts",
+    "clean": "rm -f ./*.tsbuildinfo && rm -rf equilibrium && rm -rf eq-next && rm -rf genshiro && rm -f *.d.ts && rm -f *.js",
+    "display:versions": "echo \"node:`node -v`;tsc:`tsc -v`;ts-node:`ts-node -v`\"",
+    "generate:docs": "ts-node docs/create.ts",
+    "generate:equilibrium:defs": "ts-node --skip-project node_modules/.bin/polkadot-types-from-defs --package @equilab/api/equilibrium/interfaces --input ./src/equilibrium/interfaces",
+    "generate:equilibrium:meta": "ts-node --skip-project node_modules/.bin/polkadot-types-from-chain --package @equilab/api/equilibrium/interfaces --endpoint wss://node.equilibrium.io --output ./src/equilibrium/interfaces --strict",
+    "generate:equilibrium": "yarn generate:equilibrium:defs && yarn generate:equilibrium:meta",
+    "generate:eq-next:defs": "ts-node --skip-project node_modules/.bin/polkadot-types-from-defs --package @equilab/api/eq-next/interfaces --input ./src/eq-next/interfaces",
+    "generate:eq-next:meta": "ts-node --skip-project node_modules/.bin/polkadot-types-from-chain --package @equilab/api/eq-next/interfaces --endpoint wss://devnet.genshiro.io --output ./src/eq-next/interfaces --strict",
+    "generate:eq-next": "yarn generate:eq-next:defs && yarn generate:eq-next:meta",
+    "generate:genshiro:defs": "ts-node --skip-project node_modules/.bin/polkadot-types-from-defs --package @equilab/api/genshiro/interfaces --input ./src/genshiro/interfaces",
+    "generate:genshiro:meta": "ts-node --skip-project node_modules/.bin/polkadot-types-from-chain --package @equilab/api/genshiro/interfaces --endpoint wss://node.genshiro.io --output ./src/genshiro/interfaces --strict",
+    "generate:genshiro": "yarn generate:genshiro:defs && yarn generate:genshiro:meta",
+    "generate": "yarn generate:equilibrium && yarn generate:eq-next && yarn generate:genshiro",
+    "lint": "tsc --noEmit --pretty",
+    "test": "echo \"mocha --require ts-node/register\"",
+    "coverage": "nyc yarn test",
+    "preversion": "yarn build && yarn test && git add . && (git commit -m \"Build version $npm_package_version\" || true)",
+    "postversion": "git push --tags && yarn publish . --access public --new-version $npm_package_version --tag latest && echo \"version $npm_package_version published; do not forget to push your changes to repository\""
+  },
+  "dependencies": {
+    "@equilab/definitions": "1.4.11",
+    "@polkadot/api": "7.11.1",
+    "abort-controller": "^3.0.0",
+    "isomorphic-fetch": "^3.0.0"
+  },
+  "devDependencies": {
+    "@polkadot/typegen": "7.11.1",
+    "@types/mocha": "^8.0.3",
+    "@types/node": "^14.14.7",
+    "mocha": "^8.1.3",
+    "nyc": "^15.1.0",
+    "ts-node": "10.7.0",
+    "typescript": "4.7.0-dev.20220309"
+  }
+}
